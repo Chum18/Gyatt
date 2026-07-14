@@ -1,0 +1,1366 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover"/>
+<meta name="apple-mobile-web-app-capable" content="yes"/>
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent"/>
+<meta name="apple-mobile-web-app-title" content="Jane Doe Build"/>
+<meta name="theme-color" content="#0f0d0b"/>
+<title>Jane Doe Build</title>
+<style>
+*{box-sizing:border-box;-webkit-tap-highlight-color:transparent;margin:0;padding:0;}
+html,body,#root{height:100%;background:#0f0d0b;}
+body{overscroll-behavior:none;}
+input,select,textarea{-webkit-appearance:none;appearance:none;border-radius:0;}
+main{-webkit-overflow-scrolling:touch;}
+@media(max-width:700px){
+  .jdb-sidebar{display:none!important;}
+  .jdb-bottom-nav{display:flex!important;}
+  .jdb-main-pad{padding:14px 12px 90px!important;}
+}
+@media(min-width:701px){
+  .jdb-bottom-nav{display:none!important;}
+  .jdb-main-pad{padding:28px 28px 60px;}
+}
+.jdb-bottom-nav{
+  position:fixed;bottom:0;left:0;right:0;
+  background:#161310;border-top:1px solid #2e2820;
+  justify-content:space-around;
+  padding:8px 0;
+  padding-bottom:max(10px,env(safe-area-inset-bottom));
+  z-index:1000;
+}
+</style>
+</head>
+<body>
+<div id="root"></div>
+
+<script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+<script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+<script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+
+<script>
+/* PWA manifest blob */
+const _mf={name:"Jane Doe Build",short_name:"Jane Doe",start_url:"./",display:"standalone",
+  background_color:"#0f0d0b",theme_color:"#0f0d0b",orientation:"portrait-primary",
+  icons:[
+    {src:"data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 192 192'%3E%3Crect width='192' height='192' fill='%230f0d0b' rx='28'/%3E%3Ctext x='96' y='130' font-size='100' text-anchor='middle' fill='%23c8774a' font-family='Georgia,serif'%3EJ%3C/text%3E%3C/svg%3E",sizes:"192x192",type:"image/svg+xml"},
+    {src:"data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 512 512'%3E%3Crect width='512' height='512' fill='%230f0d0b' rx='80'/%3E%3Ctext x='256' y='360' font-size='280' text-anchor='middle' fill='%23c8774a' font-family='Georgia,serif'%3EJ%3C/text%3E%3C/svg%3E",sizes:"512x512",type:"image/svg+xml"}
+  ]};
+const _mb=new Blob([JSON.stringify(_mf)],{type:"application/json"});
+const _ml=document.createElement("link");_ml.rel="manifest";_ml.href=URL.createObjectURL(_mb);
+document.head.appendChild(_ml);
+
+/* Offline service worker — caches the shell, lets API calls through */
+if("serviceWorker" in navigator){
+  const sw=`
+const CACHE="jdb-v3";
+self.addEventListener("install",e=>{ self.skipWaiting(); });
+self.addEventListener("activate",e=>e.waitUntil(clients.claim()));
+self.addEventListener("fetch",e=>{
+  const u=e.request.url;
+  if(u.includes("anthropic.com")||u.includes("unpkg.com")||u.startsWith("blob:"))return;
+  e.respondWith(
+    caches.match(e.request).then(cached=>{
+      const net=fetch(e.request).then(res=>{
+        const cl=res.clone();
+        caches.open(CACHE).then(c=>c.put(e.request,cl));
+        return res;
+      }).catch(()=>cached||new Response("Offline",{status:503}));
+      return cached||net;
+    })
+  );
+});`;
+  const sb=new Blob([sw],{type:"application/javascript"});
+  navigator.serviceWorker.register(URL.createObjectURL(sb)).catch(()=>{});
+}
+window._jdbTab="Dashboard";
+</script>
+
+<script type="text/babel" data-presets="react">
+const { useState, useEffect, useRef } = React;
+
+
+// ─── STORAGE ──────────────────────────────────────────────────────────────────
+const db = {
+  get: async (k) => { try { const v=localStorage.getItem(k); return v?JSON.parse(v):null; } catch{return null;} },
+  set: async (k,v) => { try { localStorage.setItem(k,JSON.stringify(v)); } catch{} },
+};
+
+// ─── DATE HELPERS ─────────────────────────────────────────────────────────────
+const fmtDate  = (d) => { const y=d.getFullYear(),m=String(d.getMonth()+1).padStart(2,"0"),dd=String(d.getDate()).padStart(2,"0"); return `${y}-${m}-${dd}`; };
+const addDays  = (d,n) => { const x=new Date(d.getTime()); x.setDate(x.getDate()+n); return x; };
+const parseDate= (s) => { const [y,m,d]=s.split("-").map(Number); return new Date(y,m-1,d); };
+const DAYS7    = ["Mon","Tue","Wed","Thu","Fri","Sat","Sun"];
+const dayName  = (s) => { const d=parseDate(s),dow=d.getDay(); return DAYS7[dow===0?6:dow-1]; };
+const getWeekDates = (anchorStr) => {
+  const d=parseDate(anchorStr),dow=d.getDay(),off=dow===0?-6:1-dow;
+  return DAYS7.map((_,i)=>fmtDate(addDays(d,off+i)));
+};
+const shortDate = (s) => parseDate(s).toLocaleDateString("en-US",{month:"short",day:"numeric"});
+const longDate  = (s) => parseDate(s).toLocaleDateString("en-US",{weekday:"long",month:"short",day:"numeric"});
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// CALC ENGINE — evidence-based
+// ═══════════════════════════════════════════════════════════════════════════════
+/*
+  Protein targets (ISSN/ACSM consensus, Morton et al. 2018 meta-analysis):
+    Bulk/Maintain : 0.82 g per lb BW  (1.8 g/kg) — proven sweet spot for muscle gain
+    Cut           : 1.0  g per lb BW  (2.2 g/kg) — higher to preserve muscle in deficit
+
+  Fat minimum (ACSM):
+    0.35 g per lb BW (~20-25% of calories), never below 20% of total calories
+
+  Carbs: remainder after protein + fat calories
+
+  Calorie deltas (500 cal ≈ 1 lb/wk):
+    Slow cut        : -350 cal  (0.5 lb/wk, max muscle retention)
+    Moderate cut    : -500 cal  (1 lb/wk, standard)
+    Aggressive cut  : -750 cal  (1.5 lb/wk, harder to hold muscle)
+    Lean bulk       : +200 cal  (minimal fat gain)
+    Moderate bulk   : +350 cal  (sweet spot)
+    Aggressive bulk : +500 cal  (faster gains, more fat)
+*/
+function mifflin(wLbs, hCm, age, sex) {
+  const kg = wLbs * 0.453592;
+  return sex === "female"
+    ? 10*kg + 6.25*hCm - 5*(age||25) - 161
+    : 10*kg + 6.25*hCm - 5*(age||25) + 5;
+}
+const ACT = {
+  sedentary : {l:"Sedentary (desk job, no gym)",        m:1.2  },
+  light     : {l:"Light active (1-2 days/wk)",           m:1.375},
+  moderate  : {l:"Moderate active (3-5 days + labor)",   m:1.55 },
+  active    : {l:"Very active (hard labor + daily gym)",  m:1.725},
+  very      : {l:"Athlete / 2-a-days",                   m:1.9  },
+};
+const RATE_OPTS = {
+  cut: [
+    {l:"Slow cut",      delta:-350, tag:"~0.5 lb/wk — max muscle retention"},
+    {l:"Moderate cut",  delta:-500, tag:"~1 lb/wk — most popular"},
+    {l:"Aggressive cut",delta:-750, tag:"~1.5 lb/wk — higher muscle loss risk"},
+  ],
+  maintain:[{l:"Maintain",delta:0,tag:"Eat at TDEE"}],
+  bulk:[
+    {l:"Lean bulk",       delta:200, tag:"~0.25 lb/wk — slowest, leanest"},
+    {l:"Moderate bulk",   delta:350, tag:"~0.5 lb/wk — recommended sweet spot"},
+    {l:"Aggressive bulk", delta:500, tag:"~0.75 lb/wk — faster gains, more fat"},
+  ],
+};
+
+function computePlan(profile, wLbs) {
+  const w   = parseFloat(wLbs)                 || 170;
+  const h   = parseFloat(profile.heightCm)     || 175;
+  const age = parseFloat(profile.age)          || 25;
+  const sex = profile.sex                      || "male";
+  const act = profile.activityKey              || "moderate";
+  const pl  = profile.plan                     || "bulk";
+
+  const bmr  = Math.round(mifflin(w, h, age, sex));
+  const tdee = Math.round(bmr * (ACT[act]?.m || 1.55));
+
+  const opts = RATE_OPTS[pl] || RATE_OPTS.bulk;
+  const idx  = Math.min(profile.rateIdx ?? 1, opts.length - 1);
+  const delta= opts[idx].delta;
+  const cal  = Math.max(1200, tdee + delta);
+
+  // Protein: 1.0 g/lb on cut, 0.82 g/lb on bulk/maintain
+  const protG  = pl === "cut" ? w * 1.0 : w * 0.82;
+  // Fat minimum: 0.35 g/lb, but also not below 20% of calories
+  const fatFloor = Math.max(w * 0.35, cal * 0.20 / 9);
+  const fatG   = fatFloor;
+  // Carbs: remainder
+  const carbCal= cal - Math.round(protG)*4 - Math.round(fatG)*9;
+  const carbG  = Math.max(0, Math.round(carbCal / 4));
+
+  return {
+    bmr, tdee, cal,
+    prot: Math.round(protG),
+    fat : Math.round(fatG),
+    carb: carbG,
+    delta, opts, idx,
+    lbsWkApprox: +(Math.abs(delta) / 500).toFixed(1),
+  };
+}
+
+// ─── SPLIT PRESETS ───────────────────────────────────────────────────────────
+const SPLIT_PRESETS = [
+  {id:"ppl6",name:"6-Day PPL",desc:"Push/Pull/Legs x2/wk",
+    days:{Mon:"Push",Tue:"Pull",Wed:"Legs",Thu:"Push",Fri:"Pull",Sat:"Legs",Sun:"Rest"}},
+  {id:"ul4",name:"4-Day Upper/Lower",desc:"Each muscle 2x/wk",
+    days:{Mon:"Upper",Tue:"Lower",Wed:"Rest",Thu:"Upper",Fri:"Lower",Sat:"Rest",Sun:"Rest"}},
+  {id:"pplul5",name:"5-Day PPLUL",desc:"PPL + Upper/Lower hybrid",
+    days:{Mon:"Push",Tue:"Pull",Wed:"Legs",Thu:"Upper",Fri:"Lower",Sat:"Rest",Sun:"Rest"}},
+  {id:"bro5",name:"5-Day Bro Split",desc:"One muscle group per day",
+    days:{Mon:"Chest",Tue:"Back",Wed:"Legs",Thu:"Shoulders",Fri:"Arms",Sat:"Rest",Sun:"Rest"}},
+  {id:"fb3",name:"3-Day Full Body",desc:"Full body every session",
+    days:{Mon:"Full Body",Tue:"Rest",Wed:"Full Body",Thu:"Rest",Fri:"Full Body",Sat:"Rest",Sun:"Rest"}},
+  {id:"arnold6",name:"6-Day Arnold Split",desc:"Chest/Back, Shoulders/Arms, Legs x2",
+    days:{Mon:"Chest & Back",Tue:"Shoulders & Arms",Wed:"Legs",Thu:"Chest & Back",Fri:"Shoulders & Arms",Sat:"Legs",Sun:"Rest"}},
+  {id:"custom",name:"Custom Split",desc:"Build your own",
+    days:{Mon:"",Tue:"",Wed:"",Thu:"",Fri:"",Sat:"",Sun:""}},
+];
+const LIFT_SUGGESTIONS = {
+  Push:["Bench Press","Incline Bench","OHP","Lat Raise","Front Raise","Tricep Pushdown","Skull Crusher","Dips","Cable Fly"],
+  Pull:["Pull-Up","Lat Pulldown","Barbell Row","Cable Row","Face Pull","Barbell Curl","Hammer Curl","Rear Delt Fly"],
+  Legs:["Squat","Romanian DL","Leg Press","Leg Curl","Leg Extension","Hip Thrust","Calf Raise","Lunges"],
+  Upper:["Bench Press","OHP","Pull-Up","Cable Row","Lat Raise","Barbell Curl","Skull Crusher"],
+  Lower:["Squat","Romanian DL","Leg Press","Hip Thrust","Leg Curl","Calf Raise"],
+  "Full Body":["Squat","Deadlift","Bench Press","OHP","Pull-Up","Barbell Row"],
+  Chest:["Bench Press","Incline Bench","Decline Bench","Cable Fly","Dips","Dumbbell Fly"],
+  Back:["Deadlift","Pull-Up","Barbell Row","Cable Row","Lat Pulldown","Face Pull"],
+  Shoulders:["OHP","Lat Raise","Front Raise","Arnold Press","Face Pull","Shrugs"],
+  Arms:["Barbell Curl","Hammer Curl","Skull Crusher","Tricep Pushdown","Dips","Overhead Tricep"],
+  "Chest & Back":["Bench Press","Pull-Up","Incline Bench","Barbell Row","Cable Fly","Lat Pulldown"],
+  "Shoulders & Arms":["OHP","Lat Raise","Barbell Curl","Skull Crusher","Face Pull","Hammer Curl"],
+};
+const ALL_LIFTS=["Squat","Deadlift","Bench Press","Incline Bench","OHP","Pull-Up","Barbell Row","Lat Pulldown","Cable Row","Hip Thrust","Romanian DL","Leg Press","Leg Curl","Leg Extension","Calf Raise","Lat Raise","Front Raise","Face Pull","Barbell Curl","Hammer Curl","Skull Crusher","Tricep Pushdown","Dips","Cable Fly","Shrugs","Arnold Press","Lunges"];
+
+// ─── COLORS ──────────────────────────────────────────────────────────────────
+const C = {
+  bg:"#0f0d0b", surf:"#161310", card:"#1e1a15", border:"#2e2820",
+  accent:"#c8774a",
+  red:"#d95555", yellow:"#c9a030", blue:"#6aa0bc", purple:"#9e6ec8", green:"#68a870",
+  text:"#f0ece4", muted:"#7a7060", dim:"#3a3228",
+  plan:{cut:"#d95555", maintain:"#c9a030", bulk:"#c8774a"},
+};
+
+// ─── SHARED UI ───────────────────────────────────────────────────────────────
+const INP = {background:C.card,border:`1px solid ${C.border}`,borderRadius:10,padding:"10px 14px",
+  color:C.text,fontSize:14,width:"100%",boxSizing:"border-box",outline:"none",fontFamily:"inherit"};
+const BTN = (on, col=C.accent) => ({
+  background:on?col:C.border, border:"none", cursor:"pointer", borderRadius:10,
+  padding:"10px 16px", fontSize:13, fontWeight:700,
+  color:on?"#0f0d0b":C.muted, transition:"all 0.15s", fontFamily:"inherit",
+});
+
+function Card({children,style}){return <div style={{background:C.card,borderRadius:16,padding:18,marginBottom:14,...style}}>{children}</div>;}
+function SH({children,style}){return <div style={{fontSize:10,color:C.muted,textTransform:"uppercase",letterSpacing:"0.12em",marginBottom:12,paddingBottom:8,borderBottom:`1px solid ${C.border}`,...style}}>{children}</div>;}
+function Lbl({children}){return <div style={{fontSize:11,color:C.muted,marginBottom:5,textTransform:"uppercase",letterSpacing:"0.07em"}}>{children}</div>;}
+function Toast({msg,onDone}){
+  useEffect(()=>{const t=setTimeout(onDone,2100);return()=>clearTimeout(t);},[]);
+  return <div style={{position:"fixed",bottom:24,left:"50%",transform:"translateX(-50%)",background:C.accent,color:"#0f0d0b",padding:"10px 24px",borderRadius:10,fontWeight:700,fontSize:13,zIndex:9999,boxShadow:"0 4px 20px #0008",whiteSpace:"nowrap"}}>{msg}</div>;
+}
+function Ring({val,max,color,size=80,stroke=7,label,fmt}){
+  const r=(size-stroke)/2,circ=2*Math.PI*r,pct=Math.min(1,Math.max(0,(val||0)/(max||1)));
+  return(
+    <div style={{display:"flex",flexDirection:"column",alignItems:"center",gap:5}}>
+      <div style={{position:"relative",width:size,height:size}}>
+        <svg width={size} height={size} style={{transform:"rotate(-90deg)"}}>
+          <circle cx={size/2} cy={size/2} r={r} fill="none" stroke={C.border} strokeWidth={stroke}/>
+          <circle cx={size/2} cy={size/2} r={r} fill="none" stroke={color} strokeWidth={stroke}
+            strokeLinecap="round" strokeDasharray={`${pct*circ} ${circ}`} style={{transition:"stroke-dasharray 0.5s ease"}}/>
+        </svg>
+        <div style={{position:"absolute",inset:0,display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center"}}>
+          <span style={{fontFamily:"monospace",fontSize:11,color,fontWeight:700}}>{fmt?fmt(val||0):(val||0)}</span>
+          <span style={{fontSize:8,color:C.dim}}>/{max}</span>
+        </div>
+      </div>
+      <span style={{fontSize:10,color:C.muted,textTransform:"uppercase",letterSpacing:"0.05em",textAlign:"center"}}>{label}</span>
+    </div>
+  );
+}
+function Bar({label,val,max,color,unit=""}){
+  const pct=Math.min(100,Math.round(((val||0)/(max||1))*100)),over=(val||0)>max;
+  return(
+    <div style={{marginBottom:10}}>
+      <div style={{display:"flex",justifyContent:"space-between",marginBottom:4}}>
+        <span style={{fontSize:12,color:C.muted}}>{label}</span>
+        <span style={{fontFamily:"monospace",fontSize:12,color:over?C.red:C.text}}>{val||0}{unit}/{max}{unit} <span style={{color:C.dim}}>({pct}%)</span></span>
+      </div>
+      <div style={{background:C.border,borderRadius:4,height:6,overflow:"hidden"}}>
+        <div style={{width:`${Math.min(100,pct)}%`,height:"100%",background:over?C.red:color,borderRadius:4,transition:"width 0.4s ease"}}/>
+      </div>
+    </div>
+  );
+}
+function LineChart({data,color,unit="",h=72,goal}){
+  if(!data||data.length<2) return <div style={{color:C.dim,fontSize:12,textAlign:"center",padding:20}}>Log more days to see trend</div>;
+  const vals=data.map(d=>d.v),lo=Math.min(...vals),hi=Math.max(...vals);
+  const range=hi-lo||1,W=100,step=W/(data.length-1);
+  const py=v=>h-((v-lo)/range)*(h-14)-6;
+  const pts=data.map((d,i)=>`${i*step},${py(d.v)}`).join(" ");
+  const fill=[`0,${h}`,...data.map((d,i)=>`${i*step},${py(d.v)}`),`${(data.length-1)*step},${h}`].join(" ");
+  return(
+    <div>
+      <svg width="100%" viewBox={`0 0 ${W} ${h}`} preserveAspectRatio="none" style={{display:"block"}}>
+        {goal&&<line x1="0" y1={py(goal)} x2={W} y2={py(goal)} stroke={C.dim} strokeWidth="0.6" strokeDasharray="2,2"/>}
+        <polygon points={fill} fill={`${color}20`}/>
+        <polyline points={pts} fill="none" stroke={color} strokeWidth="1.8" strokeLinejoin="round"/>
+        {data.map((d,i)=><circle key={i} cx={i*step} cy={py(d.v)} r="2" fill={color}/>)}
+      </svg>
+      <div style={{display:"flex",justifyContent:"space-between",marginTop:4}}>
+        <span style={{fontSize:10,color:C.dim}}>{data[0]?.label}</span>
+        <span style={{fontSize:11,color,fontFamily:"monospace",fontWeight:700}}>{data[data.length-1]?.v}{unit}</span>
+        <span style={{fontSize:10,color:C.dim}}>{data[data.length-1]?.label}</span>
+      </div>
+    </div>
+  );
+}
+function DateNav({viewDate,setViewDate}){
+  const todayStr=fmtDate(new Date());
+  const isToday=viewDate===todayStr;
+  return(
+    <div style={{display:"flex",alignItems:"center",gap:8,background:C.surf,borderRadius:12,padding:"8px 14px",marginBottom:14,border:`1px solid ${C.border}`}}>
+      <button onClick={()=>setViewDate(fmtDate(addDays(parseDate(viewDate),-1)))}
+        style={{background:"none",border:"none",cursor:"pointer",color:C.accent,fontSize:22,padding:"0 4px",lineHeight:1}}>&#8249;</button>
+      <div style={{flex:1,textAlign:"center"}}>
+        <div style={{fontSize:14,fontWeight:700,color:C.text}}>{longDate(viewDate)}</div>
+        {!isToday&&<div style={{fontSize:10,color:C.accent}}>Viewing past entry</div>}
+      </div>
+      <button onClick={()=>{if(!isToday) setViewDate(fmtDate(addDays(parseDate(viewDate),1)));}}
+        style={{background:"none",border:"none",cursor:"pointer",color:isToday?C.dim:C.accent,fontSize:22,padding:"0 4px",lineHeight:1,opacity:isToday?0.3:1}}>&#8250;</button>
+      {!isToday&&<button onClick={()=>setViewDate(todayStr)} style={{...BTN(true),padding:"5px 12px",fontSize:11}}>Today</button>}
+    </div>
+  );
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// ROOT
+// ═══════════════════════════════════════════════════════════════════════════════
+const TABS=[{id:"Dashboard",ic:"⬡"},{id:"Nutrition",ic:"◈"},{id:"Training",ic:"◉"},{id:"Progress",ic:"◎"},{id:"Settings",ic:"◌"}];
+
+function App(){
+  const [tab,setTabInner]=useState("Dashboard");
+  const setTab = t => { setTabInner(t); window._jdbTab=t; };
+  const [toast,setToast]=useState(null);
+  const [ready,setReady]=useState(false);
+  const [viewDate,setViewDate]=useState(fmtDate(new Date()));
+  const [profile,setProfile]=useState({name:"",sex:"male",age:"",heightCm:"",activityKey:"moderate",plan:"bulk",rateIdx:1,weightGoal:""});
+  const [logs,setLogs]=useState({});
+  const [wkLogs,setWkLogs]=useState({});
+  const [split,setSplit]=useState({presetId:"ppl6",days:{...SPLIT_PRESETS[0].days}});
+  const [foodHistory,setFoodHistory]=useState([]); // [{name,serving,cal,p,c,f,grams}] max 15
+
+  useEffect(()=>{
+    (async()=>{
+      const p=await db.get("jdb:profile");  if(p) setProfile(p);
+      const l=await db.get("jdb:logs");    if(l) setLogs(l);
+      const w=await db.get("jdb:wk");      if(w) setWkLogs(w);
+      const s=await db.get("jdb:split");   if(s) setSplit(s);
+      const fh=await db.get("jdb:foodhist"); if(fh) setFoodHistory(fh);
+      setReady(true);
+    })();
+  },[]);
+
+  const saveProfile=async p=>{setProfile(p);await db.set("jdb:profile",p);};
+  const saveSplit=async s=>{setSplit(s);await db.set("jdb:split",s);};
+  const addToFoodHistory=async(food)=>{
+    setFoodHistory(prev=>{
+      const filtered=prev.filter(f=>!(f.name===food.name&&f.serving===food.serving));
+      const next=[{name:food.name,serving:food.serving,cal:food.cal,p:food.p,c:food.c,f:food.f,grams:food.grams||0},...filtered].slice(0,15);
+      db.set("jdb:foodhist",next);
+      return next;
+    });
+  };
+
+  const updateLog=async(date,patch)=>{
+    setLogs(prev=>{
+      const next={...prev,[date]:{...(prev[date]||{}),date,...patch}};
+      db.set("jdb:logs",next);
+      return next;
+    });
+  };
+  const deleteLog=async(date)=>{
+    setLogs(prev=>{
+      const next={...prev};
+      delete next[date];
+      db.set("jdb:logs",next);
+      return next;
+    });
+  };
+  const updateWk=async(date,patch)=>{
+    setWkLogs(prev=>{
+      const next={...prev,[date]:{...(prev[date]||{exercises:[]}),...patch}};
+      db.set("jdb:wk",next);
+      return next;
+    });
+  };
+  const deleteWkDay=async(date)=>{
+    setWkLogs(prev=>{
+      const next={...prev};
+      delete next[date];
+      db.set("jdb:wk",next);
+      return next;
+    });
+  };
+
+  const curLog=logs[viewDate]||{};
+  const recentW=(()=>{
+    const ds=Object.keys(logs).sort().reverse();
+    for(const d of ds){if(logs[d]?.weightLbs)return parseFloat(logs[d].weightLbs);}
+    return null;
+  })();
+  const wkg=recentW||170;
+  const plan=computePlan(profile,wkg);
+  const todaySplitLabel=split.days[dayName(fmtDate(new Date()))]||"Rest";
+  const showToast=msg=>setToast(msg);
+
+  if(!ready) return <div style={{background:C.bg,minHeight:"100vh",display:"flex",alignItems:"center",justifyContent:"center",color:C.accent,fontSize:18,fontFamily:"system-ui"}}>Loading Jane Doe Build...</div>;
+
+  return(
+    <div style={{background:C.bg,minHeight:"100vh",fontFamily:"system-ui,-apple-system,sans-serif",color:C.text,display:"flex"}}>
+      {/* SIDEBAR */}
+      <aside className="jdb-sidebar" style={{width:200,flexShrink:0,height:"100vh",position:"sticky",top:0,background:C.surf,borderRight:`1px solid ${C.border}`,display:"flex",flexDirection:"column",padding:"28px 0",zIndex:10}}>
+        <div style={{padding:"0 20px 28px"}}>
+          <div style={{fontSize:8,letterSpacing:"0.22em",color:C.dim,textTransform:"uppercase"}}>Jane Doe Build</div>
+          <div style={{fontFamily:"Georgia,serif",fontSize:13,color:C.muted,marginTop:6}}>
+            {new Date().toLocaleDateString("en-US",{weekday:"long",month:"short",day:"numeric"})}
+          </div>
+        </div>
+        {TABS.map(({id,ic})=>(
+          <button key={id} onClick={()=>setTab(id)} style={{
+            background:tab===id?`${C.accent}18`:"none",border:"none",cursor:"pointer",
+            display:"flex",alignItems:"center",gap:12,padding:"13px 20px",textAlign:"left",width:"100%",
+            borderLeft:tab===id?`3px solid ${C.accent}`:"3px solid transparent",
+            color:tab===id?C.accent:C.muted,fontSize:13,fontWeight:tab===id?700:400,
+            transition:"all 0.15s",fontFamily:"inherit"}}>
+            <span style={{fontSize:15}}>{ic}</span>{id}
+          </button>
+        ))}
+        {/* Plan badge */}
+        <div style={{margin:"auto 16px 0",padding:"14px",background:C.card,borderRadius:12,border:`1px solid ${C.border}`}}>
+          <div style={{fontSize:9,color:C.muted,textTransform:"uppercase",letterSpacing:"0.08em"}}>Plan</div>
+          <div style={{fontSize:15,fontWeight:700,color:C.plan[profile.plan||"bulk"],textTransform:"capitalize",marginTop:2}}>{profile.plan||"bulk"}</div>
+          <div style={{fontSize:12,color:C.muted,marginTop:1}}>{plan.cal} kcal / day</div>
+          <div style={{height:1,background:C.border,margin:"8px 0"}}/>
+          <div style={{fontSize:9,color:C.muted,textTransform:"uppercase",letterSpacing:"0.06em"}}>Today</div>
+          <div style={{fontSize:12,color:C.accent,marginTop:2,fontWeight:600}}>{todaySplitLabel}</div>
+          {recentW&&<div style={{fontSize:11,color:C.muted,marginTop:2}}>{recentW} lbs logged</div>}
+        </div>
+      </aside>
+
+      {/* MAIN */}
+      <main style={{flex:1,minWidth:0,overflowY:"auto",height:"100vh"}}>
+        <div className="jdb-main-pad" style={{maxWidth:1100,margin:"0 auto"}}>
+          {(tab==="Dashboard"||tab==="Nutrition")&&(
+            <DateNav viewDate={viewDate} setViewDate={setViewDate}/>
+          )}
+          {tab==="Dashboard" && <DashTab log={curLog} updateLog={p=>updateLog(viewDate,p)} plan={plan} profile={profile} showToast={showToast} todaySplitLabel={todaySplitLabel} viewDate={viewDate}/>}
+          {tab==="Nutrition" && <NutritionTab log={curLog} updateLog={p=>updateLog(viewDate,p)} plan={plan} showToast={showToast} viewDate={viewDate} foodHistory={foodHistory} addToFoodHistory={addToFoodHistory}/>}
+          {tab==="Training"  && <TrainingTab wkLogs={wkLogs} updateWk={updateWk} deleteWkDay={deleteWkDay} split={split} saveSplit={saveSplit} showToast={showToast}/>}
+          {tab==="Progress"  && <ProgressTab logs={logs} wkLogs={wkLogs} plan={plan} deleteLog={deleteLog} showToast={showToast}/>}
+          {tab==="Settings"  && <SettingsTab profile={profile} saveProfile={saveProfile} showToast={showToast} plan={plan} recentW={wkg}/>}
+        </div>
+      </main>
+
+      {toast&&<Toast msg={toast} onDone={()=>setToast(null)}/>}
+    </div>
+  );
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// DASHBOARD
+// ═══════════════════════════════════════════════════════════════════════════════
+function DashTab({log,updateLog,plan,profile,showToast,todaySplitLabel,viewDate}){
+  // Track whether the user is actively typing — if so, don't stomp their input
+  const [wStr,setWStr]=useState(log.weightLbs!=null?String(log.weightLbs):"");
+  const userTyping=useRef(false);
+
+  // Sync from storage whenever: date changes, OR log.weightLbs loads in (initial mount)
+  // But only if user isn't mid-type
+  useEffect(()=>{
+    if(!userTyping.current){
+      setWStr(log.weightLbs!=null?String(log.weightLbs):"");
+    }
+  },[viewDate, log.weightLbs]);
+
+  function commitW(val){
+    userTyping.current=false;
+    const n=parseFloat(val);
+    if(!isNaN(n)&&n>0){ updateLog({weightLbs:n}); }
+  }
+  function nudge(dir){
+    // Always read from wStr so arrows accumulate on whatever is displayed
+    const cur=parseFloat(wStr)||0;
+    const next=Math.max(0,cur+dir); // whole pound steps
+    const nextStr=String(next);
+    userTyping.current=false; // nudge is a commit
+    setWStr(nextStr);
+    updateLog({weightLbs:next});
+  }
+
+  // Sleep hours
+  const sleepH=(()=>{
+    if(!log.sleptAt||!log.wokeAt) return 0;
+    const [sh,sm]=(log.sleptAt||"00:00").split(":").map(Number);
+    const [wh,wm]=(log.wokeAt ||"00:00").split(":").map(Number);
+    let d=(wh*60+wm)-(sh*60+sm); if(d<0)d+=1440;
+    return +(d/60).toFixed(1);
+  })();
+
+  const totalOz=log.waterOz||0;
+  const gallons=Math.floor(totalOz/128);
+  const remOz=+(totalOz%128).toFixed(1);
+
+  return(
+    <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(300px,1fr))",gap:14}}>
+
+      {/* Rings */}
+      <Card style={{gridColumn:"1/-1"}}>
+        <SH>At a Glance — {longDate(viewDate)}</SH>
+        <div style={{display:"flex",justifyContent:"space-around",flexWrap:"wrap",gap:12}}>
+          <Ring val={log.cal||0}   max={plan.cal}  color={C.accent} label="Calories"/>
+          <Ring val={log.prot||0}  max={plan.prot} color={C.red}    label="Protein g"/>
+          <Ring val={Math.round(totalOz)} max={128} color={C.blue}  label="Water oz" fmt={v=>`${v}`}/>
+          <Ring val={sleepH}       max={8}         color={C.purple} label="Sleep h"  fmt={v=>`${v}h`}/>
+          <Ring val={log.creatine?1:0} max={1}     color={C.yellow} label="Creatine" fmt={v=>v?"done":"-"}/>
+        </div>
+      </Card>
+
+      {/* Body Weight — fixed nudge */}
+      <Card>
+        <SH>Body Weight</SH>
+        <div style={{display:"flex",gap:8,alignItems:"center",marginBottom:8}}>
+          <button onClick={()=>nudge(-1)}
+            style={{...BTN(false),padding:"0",width:44,height:48,fontSize:24,borderRadius:10,flexShrink:0,textAlign:"center"}}>-</button>
+          <input
+            type="text" inputMode="decimal"
+            value={wStr}
+            onChange={e=>{ userTyping.current=true; setWStr(e.target.value); }}
+            onBlur={e=>commitW(e.target.value)}
+            onKeyDown={e=>e.key==="Enter"&&commitW(wStr)}
+            placeholder="150"
+            style={{...INP,fontSize:26,fontFamily:"monospace",color:C.accent,textAlign:"center",flex:1,padding:"8px"}}
+          />
+          <button onClick={()=>nudge(1)}
+            style={{...BTN(false),padding:"0",width:44,height:48,fontSize:24,borderRadius:10,flexShrink:0,textAlign:"center"}}>+</button>
+          <span style={{color:C.muted,fontSize:13,flexShrink:0}}>lbs</span>
+        </div>
+        <div style={{fontSize:11,color:C.dim}}>
+          Type weight or tap +/- for whole pound increments. Calorie targets auto-recalc from most recent entry.
+        </div>
+        {profile.weightGoal&&wStr&&(
+          <div style={{marginTop:8,fontSize:12,color:C.muted}}>
+            Goal: <span style={{color:C.accent,fontFamily:"monospace"}}>{profile.weightGoal} lbs</span>
+            <span style={{color:C.dim}}> — {Math.abs(parseFloat(wStr)-parseFloat(profile.weightGoal)).toFixed(1)} lbs away</span>
+          </div>
+        )}
+      </Card>
+
+      {/* Today's split */}
+      <Card>
+        <SH>Today's Training</SH>
+        <div style={{fontSize:30,fontWeight:700,color:todaySplitLabel==="Rest"?C.dim:C.accent,letterSpacing:"-0.01em"}}>{todaySplitLabel}</div>
+        <div style={{fontSize:11,color:C.muted,marginTop:4}}>Log sets in the Training tab</div>
+      </Card>
+
+      {/* Creatine + Water — combined card */}
+      <Card style={{gridColumn:"1/-1"}}>
+        <SH>Daily Intake</SH>
+        <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:20}}>
+
+          {/* Creatine side */}
+          <div style={{borderRight:`1px solid ${C.border}`,paddingRight:20}}>
+            <div style={{fontSize:12,color:C.muted,textTransform:"uppercase",letterSpacing:"0.07em",marginBottom:10}}>Creatine 5g</div>
+            <div style={{fontSize:22,fontWeight:700,color:log.creatine?C.yellow:C.dim,marginBottom:12}}>{log.creatine?"Taken":"Not yet"}</div>
+            <button
+              onClick={()=>{updateLog({creatine:!log.creatine});showToast(log.creatine?"Unchecked":"Creatine logged");}}
+              style={{...BTN(!!log.creatine,C.yellow),width:"100%",padding:"11px 0",fontSize:14}}>
+              {log.creatine?"Undo":"Log Creatine"}
+            </button>
+          </div>
+
+          {/* Water side */}
+          <div>
+            <div style={{fontSize:12,color:C.muted,textTransform:"uppercase",letterSpacing:"0.07em",marginBottom:6}}>Water</div>
+            {/* Display: gallons + oz */}
+            <div style={{display:"flex",alignItems:"baseline",gap:8,marginBottom:6}}>
+              {gallons>0&&<span style={{fontFamily:"monospace",fontSize:20,color:C.blue,fontWeight:700}}>{gallons} gal</span>}
+              <span style={{fontFamily:"monospace",fontSize:gallons>0?16:22,color:gallons>0?C.muted:C.blue,fontWeight:700}}>{remOz} oz</span>
+              <span style={{fontSize:10,color:C.dim}}>/ 128 oz</span>
+            </div>
+            <div style={{background:C.border,borderRadius:4,height:5,overflow:"hidden",marginBottom:10}}>
+              <div style={{width:`${Math.min(100,(totalOz%128)/128*100)}%`,height:"100%",background:C.blue,borderRadius:4,transition:"width 0.4s"}}/>
+            </div>
+            <div style={{display:"flex",gap:6}}>
+              {[8,16,32].map(oz=>(
+                <button key={oz} onClick={()=>updateLog({waterOz:Math.max(0,+(totalOz+oz).toFixed(1))})}
+                  style={{flex:1,...BTN(false),color:C.blue,fontSize:12,padding:"8px 0"}}>+{oz}oz</button>
+              ))}
+              <button onClick={()=>updateLog({waterOz:Math.max(0,+(totalOz-8).toFixed(1))})}
+                style={{...BTN(false),padding:"8px 12px",fontSize:12,color:C.dim}}>-8</button>
+            </div>
+          </div>
+        </div>
+      </Card>
+
+      {/* Sleep */}
+      <Card>
+        <SH>Sleep Log</SH>
+        <div style={{fontSize:11,color:C.dim,marginBottom:12,lineHeight:1.5}}>
+          Log when you went to bed (previous night) and when you woke up. Cross-midnight handled automatically.
+        </div>
+        <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10,marginBottom:12}}>
+          <div>
+            <Lbl>Went to bed</Lbl>
+            <input
+              type="time"
+              value={log.sleptAt||""}
+              onChange={e=>{ updateLog({sleptAt:e.target.value}); }}
+              style={{...INP}}
+            />
+          </div>
+          <div>
+            <Lbl>Woke up</Lbl>
+            <input
+              type="time"
+              value={log.wokeAt||""}
+              onChange={e=>{ updateLog({wokeAt:e.target.value}); }}
+              style={{...INP}}
+            />
+          </div>
+        </div>
+        {sleepH>0&&(
+          <div style={{textAlign:"center",fontSize:16,fontWeight:700,color:sleepH>=8?C.green:sleepH>=6.5?C.yellow:C.red}}>
+            {sleepH}h {sleepH>=8?"— Goal met":sleepH>=6.5?`— ${(8-sleepH).toFixed(1)}h short`:`— ${(8-sleepH).toFixed(1)}h under target`}
+          </div>
+        )}
+      </Card>
+
+      {/* Macros */}
+      <Card style={{gridColumn:"1/-1"}}>
+        <SH>Macros</SH>
+        <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(260px,1fr))",gap:"0 28px"}}>
+          <Bar label="Calories" val={log.cal||0}  max={plan.cal}  color={C.accent}/>
+          <Bar label="Protein"  val={log.prot||0} max={plan.prot} color={C.red}    unit="g"/>
+          <Bar label="Carbs"    val={log.carb||0} max={plan.carb} color={C.yellow} unit="g"/>
+          <Bar label="Fat"      val={log.fat||0}  max={plan.fat}  color={C.green}  unit="g"/>
+        </div>
+      </Card>
+
+      {/* Daily Notes */}
+      <Card style={{gridColumn:"1/-1"}}>
+        <SH>Daily Notes</SH>
+        <textarea
+          value={log.notes||""}
+          onChange={e=>updateLog({notes:e.target.value})}
+          placeholder="How did today feel? Energy, mood, any PRs, diet notes..."
+          style={{...INP,height:90,resize:"vertical",lineHeight:1.6,fontSize:13}}
+        />
+      </Card>
+    </div>
+  );
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// NUTRITION
+// ═══════════════════════════════════════════════════════════════════════════════
+function NutritionTab({log,updateLog,plan,showToast,viewDate,foodHistory,addToFoodHistory}){
+  const [query,setQuery]=useState("");
+  const [results,setResults]=useState([]);
+  const [searching,setSearching]=useState(false);
+  const [servingMap,setServingMap]=useState({});
+  const [unitMap,setUnitMap]=useState({});
+  const toGrams={g:1,oz:28.3495,lb:453.592,cup:240,tbsp:15,tsp:5};
+
+  async function searchFood(){
+    if(!query.trim())return;
+    setSearching(true);setResults([]);
+    try{
+      const res=await fetch("https://api.anthropic.com/v1/messages",{
+        method:"POST",headers:{"Content-Type":"application/json"},
+        body:JSON.stringify({
+          model:"claude-sonnet-4-6",max_tokens:1000,
+          messages:[{role:"user",content:`Return a JSON array (no markdown, no extra text) of up to 8 foods matching "${query}". Each item: {"name":string,"serving":string,"grams":number,"cal":number,"p":number,"c":number,"f":number}. Use USDA nutritional values. "serving" is a human description like "1 cup cooked (240g)". "grams" is serving weight in grams. All macro values are for that serving size.`}]
+        })
+      });
+      const d=await res.json();
+      const raw=d.content?.[0]?.text||"[]";
+      setResults(JSON.parse(raw.replace(/```json|```/g,"").trim()));
+    }catch{ showToast("Search failed — try again"); }
+    setSearching(false);
+  }
+
+  function getScaled(item,key){
+    const g=parseFloat(servingMap[key]);
+    const unit=unitMap[key]||"g";
+    const grams=g?g*toGrams[unit]:item.grams;
+    const mult=grams/(item.grams||1);
+    return {cal:Math.round(item.cal*mult),p:Math.round(item.p*mult),c:Math.round(item.c*mult),f:Math.round(item.f*mult),grams};
+  }
+
+  function commitFood(food){
+    // food = {name,serving,cal,p,c,f,grams}
+    const entry={...food,id:Date.now()};
+    const foods=[...(log.foods||[]),entry];
+    updateLog({foods,cal:(log.cal||0)+food.cal,prot:(log.prot||0)+food.p,carb:(log.carb||0)+food.c,fat:(log.fat||0)+food.f});
+    addToFoodHistory(food);
+    showToast(`${food.name.slice(0,28)} added`);
+  }
+
+  function addFromSearch(item,key){
+    const sc=getScaled(item,key);
+    commitFood({name:item.name,serving:`${servingMap[key]||item.grams}${unitMap[key]||"g"}`,
+      cal:sc.cal,p:sc.p,c:sc.c,f:sc.f,grams:sc.grams});
+  }
+
+  function removeFood(id){
+    const f=(log.foods||[]).find(x=>x.id===id);if(!f)return;
+    const foods=(log.foods||[]).filter(x=>x.id!==id);
+    updateLog({foods,cal:(log.cal||0)-f.cal,prot:(log.prot||0)-f.p,carb:(log.carb||0)-f.c,fat:(log.fat||0)-f.f});
+  }
+
+  return(
+    <div>
+      {/* Quick Add History */}
+      {foodHistory.length>0&&(
+        <Card>
+          <SH>Quick Add — Recent Foods</SH>
+          <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(280px,1fr))",gap:8}}>
+            {foodHistory.map((f,i)=>(
+              <div key={i} style={{display:"flex",justifyContent:"space-between",alignItems:"center",
+                background:C.surf,borderRadius:10,padding:"9px 12px",border:`1px solid ${C.border}`}}>
+                <div style={{minWidth:0,flex:1}}>
+                  <div style={{fontSize:13,fontWeight:600,whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>{f.name}</div>
+                  <div style={{fontSize:10,color:C.muted}}>{f.serving} &middot; {f.cal}cal &middot; {f.p}g P</div>
+                </div>
+                <button onClick={()=>commitFood({...f})}
+                  style={{...BTN(true),padding:"5px 14px",fontSize:12,marginLeft:8,flexShrink:0}}>Add</button>
+              </div>
+            ))}
+          </div>
+        </Card>
+      )}
+
+      <Card>
+        <SH>Food Search</SH>
+        <div style={{display:"flex",gap:8,marginBottom:6}}>
+          <input value={query} onChange={e=>setQuery(e.target.value)}
+            placeholder='e.g. "chicken breast 6oz" or "oats 1 cup dry"'
+            onKeyDown={e=>e.key==="Enter"&&searchFood()} style={{...INP,flex:1}}/>
+          <button onClick={searchFood} style={{...BTN(true),flexShrink:0,padding:"10px 20px"}}>
+            {searching?"...":"Search"}
+          </button>
+        </div>
+        <div style={{fontSize:10,color:C.dim,marginBottom:10}}>AI-powered lookup using USDA nutritional data. Added foods appear in Quick Add above.</div>
+        {searching&&<div style={{textAlign:"center",color:C.muted,padding:20}}>Searching...</div>}
+        <div>
+          {results.map((item,i)=>{
+            const key=`${i}-${item.name}`;
+            const unit=unitMap[key]||"g";
+            const sc=getScaled(item,key);
+            return(
+              <div key={key} style={{borderBottom:`1px solid ${C.border}`,padding:"12px 0"}}>
+                <div style={{fontSize:13,fontWeight:700,marginBottom:2}}>{item.name}</div>
+                <div style={{fontSize:11,color:C.muted,marginBottom:8}}>
+                  Default: {item.serving} &mdash;
+                  <span style={{color:C.text}}> {sc.cal} cal &middot; {sc.p}g P &middot; {sc.c}g C &middot; {sc.f}g F</span>
+                </div>
+                <div style={{display:"flex",gap:8,alignItems:"center",flexWrap:"wrap"}}>
+                  <input type="number" value={servingMap[key]||""} placeholder={`${item.grams}`}
+                    onChange={e=>setServingMap(m=>({...m,[key]:e.target.value}))}
+                    style={{...INP,width:90,padding:"6px 10px",fontSize:13}}/>
+                  <select value={unit} onChange={e=>setUnitMap(m=>({...m,[key]:e.target.value}))}
+                    style={{...INP,width:90,padding:"6px 10px",fontSize:13}}>
+                    {Object.keys(toGrams).map(u=><option key={u} value={u}>{u}</option>)}
+                  </select>
+                  <button onClick={()=>addFromSearch(item,key)}
+                    style={{...BTN(true),marginLeft:"auto",padding:"7px 20px",fontSize:12}}>Add</button>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      </Card>
+
+      {(log.foods||[]).length>0&&(
+        <Card>
+          <SH>Food Log — {shortDate(viewDate)}</SH>
+          {(log.foods||[]).map(f=>(
+            <div key={f.id} style={{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"8px 0",borderBottom:`1px solid ${C.border}`}}>
+              <div>
+                <div style={{fontSize:13,fontWeight:600}}>{f.name}</div>
+                <div style={{fontSize:11,color:C.muted}}>{f.cal} cal &middot; {f.p}g P &middot; {f.c}g C &middot; {f.f}g F{f.serving?` &middot; ${f.serving}`:""}</div>
+              </div>
+              <button onClick={()=>removeFood(f.id)} style={{background:"none",border:"none",cursor:"pointer",color:C.dim,fontSize:18,padding:"4px 8px",lineHeight:1}}>&#x2715;</button>
+            </div>
+          ))}
+          <div style={{display:"flex",justifyContent:"space-between",marginTop:10,paddingTop:10,borderTop:`1px solid ${C.border}`}}>
+            <span style={{fontSize:12,color:C.muted}}>Totals</span>
+            <span style={{fontFamily:"monospace",fontSize:12,color:C.accent}}>{log.cal||0} cal &middot; {log.prot||0}g P &middot; {log.carb||0}g C &middot; {log.fat||0}g F</span>
+          </div>
+        </Card>
+      )}
+
+      <Card>
+        <SH>Remaining Today</SH>
+        <div style={{display:"grid",gridTemplateColumns:"repeat(2,1fr)",gap:8}}>
+          {[["Calories",plan.cal-(log.cal||0),"kcal",C.accent],["Protein",plan.prot-(log.prot||0),"g",C.red],
+            ["Carbs",plan.carb-(log.carb||0),"g",C.yellow],["Fat",plan.fat-(log.fat||0),"g",C.green]].map(([l,rem,u,col])=>(
+            <div key={l} style={{background:C.surf,borderRadius:10,padding:"10px 14px"}}>
+              <div style={{fontSize:11,color:C.muted}}>{l}</div>
+              <div style={{fontFamily:"monospace",fontSize:18,fontWeight:700,color:rem<0?C.red:col,marginTop:2}}>
+                {rem<0?rem:`+${rem}`}<span style={{fontSize:10,color:C.dim}}>{u}</span>
+              </div>
+            </div>
+          ))}
+        </div>
+      </Card>
+    </div>
+  );
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// TRAINING
+// ═══════════════════════════════════════════════════════════════════════════════
+function TrainingTab({wkLogs,updateWk,deleteWkDay,split,saveSplit,showToast}){
+  const [subTab,setSubTab]=useState("week");
+  const [weekOffset,setWeekOffset]=useState(0);
+  const [selectedDay,setSelectedDay]=useState(fmtDate(new Date()));
+  const anchor=fmtDate(addDays(new Date(),weekOffset*7));
+  const navDates=getWeekDates(anchor);
+  const todayStr=fmtDate(new Date());
+
+  return(
+    <div>
+      <div style={{display:"flex",gap:8,marginBottom:18}}>
+        <button onClick={()=>setSubTab("week")}  style={{...BTN(subTab==="week"), flex:1}}>Week View</button>
+        <button onClick={()=>setSubTab("split")} style={{...BTN(subTab==="split"),flex:1}}>Split Planner</button>
+      </div>
+
+      {subTab==="week"&&(
+        <>
+          <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:16,background:C.surf,borderRadius:12,padding:"8px 14px",border:`1px solid ${C.border}`}}>
+            <button onClick={()=>setWeekOffset(w=>w-1)} style={{background:"none",border:"none",cursor:"pointer",color:C.accent,fontSize:22,padding:"0 6px",lineHeight:1}}>&#8249;</button>
+            <div style={{flex:1,textAlign:"center",fontSize:13,color:C.text,fontWeight:600}}>
+              {shortDate(navDates[0])} &mdash; {shortDate(navDates[6])}
+              {weekOffset===0&&<span style={{color:C.accent,fontWeight:400}}> (this week)</span>}
+            </div>
+            <button onClick={()=>setWeekOffset(w=>Math.min(0,w+1))}
+              style={{background:"none",border:"none",cursor:"pointer",color:weekOffset>=0?C.dim:C.accent,fontSize:22,padding:"0 6px",lineHeight:1,opacity:weekOffset>=0?0.3:1}}>&#8250;</button>
+            {weekOffset!==0&&<button onClick={()=>setWeekOffset(0)} style={{...BTN(true),padding:"5px 12px",fontSize:11}}>This Week</button>}
+          </div>
+
+          {/* Full-height day cards showing all exercises */}
+          <div style={{display:"grid",gridTemplateColumns:"repeat(7,1fr)",gap:8,marginBottom:20}}>
+            {navDates.map(dateStr=>{
+              const dn=dayName(dateStr);
+              const label=split.days[dn]||"Rest";
+              const exercises=(wkLogs[dateStr]?.exercises)||[];
+              const isToday=dateStr===todayStr;
+              const isSel=dateStr===selectedDay;
+              return(
+                <div key={dateStr} onClick={()=>setSelectedDay(dateStr)}
+                  style={{borderRadius:12,padding:"10px 8px",cursor:"pointer",minHeight:220,
+                    background:isSel?`${C.accent}18`:isToday?`${C.accent}0c`:C.card,
+                    border:`1px solid ${isSel?C.accent:isToday?`${C.accent}55`:C.border}`,
+                    transition:"all 0.15s",display:"flex",flexDirection:"column"}}>
+                  {/* Header */}
+                  <div style={{marginBottom:8,paddingBottom:6,borderBottom:`1px solid ${C.border}`}}>
+                    <div style={{fontSize:10,color:isToday?C.accent:C.muted,fontWeight:isToday?700:400,textTransform:"uppercase",letterSpacing:"0.07em"}}>{dn}</div>
+                    <div style={{fontSize:11,color:C.dim}}>{parseDate(dateStr).getDate()}</div>
+                    <div style={{fontSize:11,fontWeight:700,color:label==="Rest"?C.dim:C.accent,marginTop:2,lineHeight:1.2}}>{label}</div>
+                  </div>
+                  {/* Exercises */}
+                  <div style={{flex:1}}>
+                    {exercises.length===0?(
+                      <div style={{fontSize:9,color:C.dim,textAlign:"center",marginTop:8}}>{label==="Rest"?"Rest":"Empty"}</div>
+                    ):(
+                      exercises.map(ex=>(
+                        <div key={ex.id} style={{marginBottom:5}}>
+                          <div style={{fontSize:9,fontWeight:700,color:C.text,lineHeight:1.2}}>{ex.name}</div>
+                          <div style={{fontSize:8,color:C.muted,lineHeight:1.4}}>
+                            {ex.sets.map(s=>`${s.weight}x${s.reps}`).join(" · ")}
+                          </div>
+                        </div>
+                      ))
+                    )}
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+
+          {/* Session editor for selected day */}
+          <DaySession
+            dateStr={selectedDay}
+            label={split.days[dayName(selectedDay)]||"Rest"}
+            wkLog={wkLogs[selectedDay]||{exercises:[]}}
+            updateWk={p=>updateWk(selectedDay,p)}
+            deleteWkDay={()=>{deleteWkDay(selectedDay);showToast("Session cleared");}}
+            allWk={wkLogs}
+            showToast={showToast}/>
+        </>
+      )}
+      {subTab==="split"&&<SplitPlanner split={split} saveSplit={saveSplit} showToast={showToast}/>}
+    </div>
+  );
+}
+
+function DaySession({dateStr,label,wkLog,updateWk,deleteWkDay,allWk,showToast}){
+  const [exName,setExName]=useState("");
+  const [open,setOpen]=useState(null);
+  const sugg=LIFT_SUGGESTIONS[label]||ALL_LIFTS;
+  function addEx(){
+    if(!exName.trim())return;
+    const ex={id:Date.now(),name:exName.trim(),sets:[]};
+    updateWk({exercises:[...(wkLog.exercises||[]),ex]});
+    setOpen(ex.id);setExName("");showToast(`${ex.name} added`);
+  }
+  function removeEx(id){updateWk({exercises:(wkLog.exercises||[]).filter(e=>e.id!==id)});if(open===id)setOpen(null);}
+  function addSet(exId,w,r){
+    updateWk({exercises:(wkLog.exercises||[]).map(e=>e.id===exId?{...e,sets:[...e.sets,{id:Date.now(),weight:+w,reps:+r}]}:e)});
+  }
+  function removeSet(exId,sid){
+    updateWk({exercises:(wkLog.exercises||[]).map(e=>e.id===exId?{...e,sets:e.sets.filter(s=>s.id!==sid)}:e)});
+  }
+  function getPR(name){
+    let best=0;
+    Object.values(allWk).forEach(sess=>(sess.exercises||[]).forEach(e=>{if(e.name===name)e.sets.forEach(s=>{if(s.weight>best)best=s.weight;});}));
+    return best||null;
+  }
+  return(
+    <Card>
+      <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:14}}>
+        <div>
+          <div style={{fontSize:12,color:C.muted}}>{longDate(dateStr)}</div>
+          <div style={{fontSize:22,fontWeight:700,color:label==="Rest"?C.dim:C.accent}}>{label}</div>
+        </div>
+        {(wkLog.exercises||[]).length>0&&(
+          <button onClick={deleteWkDay} style={{...BTN(false),padding:"6px 14px",fontSize:11,border:`1px solid ${C.red}`,color:C.red}}>Clear</button>
+        )}
+      </div>
+      <div style={{display:"flex",gap:8,marginBottom:10}}>
+        <input value={exName} onChange={e=>setExName(e.target.value)}
+          placeholder="Add exercise..." onKeyDown={e=>e.key==="Enter"&&addEx()} style={{...INP,flex:1}}/>
+        <button onClick={addEx} style={{...BTN(true),padding:"0 20px",fontSize:18,flexShrink:0}}>+</button>
+      </div>
+      <div style={{display:"flex",flexWrap:"wrap",gap:5,marginBottom:14}}>
+        {sugg.slice(0,10).map(s=>(
+          <button key={s} onClick={()=>setExName(s)}
+            style={{background:C.surf,border:`1px solid ${C.border}`,borderRadius:6,padding:"4px 10px",fontSize:11,color:C.muted,cursor:"pointer",fontFamily:"inherit"}}>{s}</button>
+        ))}
+      </div>
+      {(wkLog.exercises||[]).length===0&&(
+        <div style={{textAlign:"center",color:C.dim,fontSize:13,padding:"16px 0"}}>{label==="Rest"?"Rest day — add exercises if needed.":"No exercises logged yet."}</div>
+      )}
+      {(wkLog.exercises||[]).map(ex=>(
+        <ExCard key={ex.id} ex={ex} pr={getPR(ex.name)} open={open===ex.id}
+          onToggle={()=>setOpen(open===ex.id?null:ex.id)}
+          onAdd={(w,r)=>addSet(ex.id,w,r)}
+          onRemoveSet={sid=>removeSet(ex.id,sid)}
+          onRemove={()=>removeEx(ex.id)}/>
+      ))}
+    </Card>
+  );
+}
+
+function ExCard({ex,pr,open,onToggle,onAdd,onRemoveSet,onRemove}){
+  const [w,setW]=useState("");const [r,setR]=useState("");
+  const vol=ex.sets.reduce((s,x)=>s+x.weight*x.reps,0);
+  function submit(){if(!w||!r)return;onAdd(w,r);setW("");setR("");}
+  return(
+    <div style={{background:C.surf,borderRadius:12,marginBottom:8,overflow:"hidden",border:`1px solid ${C.border}`}}>
+      <div onClick={onToggle} style={{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"12px 14px",cursor:"pointer"}}>
+        <div>
+          <div style={{fontSize:14,fontWeight:700}}>{ex.name}</div>
+          <div style={{fontSize:11,color:C.muted}}>{ex.sets.length} sets &middot; vol {vol}{pr&&<span style={{color:C.accent}}> &middot; PR {pr} lbs</span>}</div>
+        </div>
+        <div style={{display:"flex",gap:10,alignItems:"center"}}>
+          <button onClick={e=>{e.stopPropagation();onRemove();}} style={{background:"none",border:"none",cursor:"pointer",color:C.dim,fontSize:13,fontFamily:"inherit",padding:"2px 6px"}}>&#x2715;</button>
+          <span style={{color:C.accent,fontSize:11}}>{open?"&#9650;":"&#9660;"}</span>
+        </div>
+      </div>
+      {open&&(
+        <div style={{padding:"0 14px 14px",borderTop:`1px solid ${C.border}`}}>
+          {ex.sets.length>0&&(
+            <div style={{padding:"10px 0 12px"}}>
+              {ex.sets.map((s,i)=>(
+                <div key={s.id} style={{display:"flex",gap:10,alignItems:"center",marginBottom:4}}>
+                  <span style={{fontFamily:"monospace",fontSize:11,color:C.dim,width:22}}>S{i+1}</span>
+                  <span style={{fontFamily:"monospace",fontSize:15,color:C.accent,minWidth:60}}>{s.weight} lbs</span>
+                  <span style={{fontFamily:"monospace",fontSize:14}}>x {s.reps}</span>
+                  <span style={{fontSize:11,color:C.dim}}>{s.weight*s.reps} vol</span>
+                  <button onClick={()=>onRemoveSet(s.id)} style={{background:"none",border:"none",cursor:"pointer",color:C.dim,fontSize:11,marginLeft:"auto",fontFamily:"inherit"}}>&#x2715;</button>
+                </div>
+              ))}
+            </div>
+          )}
+          <div style={{display:"grid",gridTemplateColumns:"1fr 1fr auto",gap:8,alignItems:"flex-end"}}>
+            <div><Lbl>Weight lbs</Lbl><input type="number" value={w} onChange={e=>setW(e.target.value)} placeholder="135" style={{...INP,textAlign:"center"}}/></div>
+            <div><Lbl>Reps</Lbl><input type="number" value={r} onChange={e=>setR(e.target.value)} placeholder="8" style={{...INP,textAlign:"center"}} onKeyDown={e=>e.key==="Enter"&&submit()}/></div>
+            <button onClick={submit} style={{...BTN(true),padding:"0 18px",fontSize:18,height:42,alignSelf:"flex-end"}}>+</button>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function SplitPlanner({split,saveSplit,showToast}){
+  const [sel,setSel]=useState(split.presetId||"ppl6");
+  const [days,setDays]=useState({...split.days});
+  const [editing,setEditing]=useState(false);
+  const DAY_OPTIONS=["Push","Pull","Legs","Upper","Lower","Full Body","Chest","Back","Shoulders","Arms","Chest & Back","Shoulders & Arms","Rest","Cardio","Active Recovery"];
+  function applyPreset(id){const p=SPLIT_PRESETS.find(x=>x.id===id);if(!p)return;setSel(id);setDays({...p.days});if(id!=="custom")setEditing(false);}
+  function save(){saveSplit({presetId:sel,days});showToast("Split saved");}
+  return(
+    <div>
+      <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(200px,1fr))",gap:10,marginBottom:14}}>
+        {SPLIT_PRESETS.map(p=>(
+          <div key={p.id} onClick={()=>applyPreset(p.id)}
+            style={{background:sel===p.id?`${C.accent}18`:C.card,border:`1px solid ${sel===p.id?C.accent:C.border}`,borderRadius:12,padding:"12px 14px",cursor:"pointer",transition:"all 0.15s"}}>
+            <div style={{fontSize:13,fontWeight:700,color:sel===p.id?C.accent:C.text}}>{p.name}</div>
+            <div style={{fontSize:11,color:C.muted,marginTop:3}}>{p.desc}</div>
+          </div>
+        ))}
+      </div>
+      <Card>
+        <SH>Weekly Layout</SH>
+        <div style={{display:"grid",gridTemplateColumns:"repeat(7,1fr)",gap:6,marginBottom:14}}>
+          {DAYS7.map(d=>(
+            <div key={d} style={{textAlign:"center"}}>
+              <div style={{fontSize:9,color:C.muted,marginBottom:4,textTransform:"uppercase"}}>{d}</div>
+              <div style={{fontSize:11,fontWeight:700,color:(days[d]||"Rest")==="Rest"?C.dim:C.accent,background:C.surf,borderRadius:8,padding:"8px 3px",lineHeight:1.3}}>{days[d]||"Rest"}</div>
+            </div>
+          ))}
+        </div>
+        <button onClick={()=>setEditing(!editing)} style={{...BTN(editing),width:"100%",marginBottom:editing?12:0}}>
+          {editing?"Done":"Customize Days"}
+        </button>
+        {editing&&DAYS7.map(d=>(
+          <div key={d} style={{display:"flex",alignItems:"center",gap:10,marginBottom:8}}>
+            <span style={{fontSize:12,color:C.muted,width:32}}>{d}</span>
+            <select value={days[d]||"Rest"} onChange={e=>setDays(x=>({...x,[d]:e.target.value}))} style={{...INP,flex:1,padding:"7px 10px",fontSize:13}}>
+              {DAY_OPTIONS.map(o=><option key={o} value={o}>{o}</option>)}
+            </select>
+          </div>
+        ))}
+        <button onClick={save} style={{...BTN(true),width:"100%",marginTop:10,padding:12,fontSize:14}}>Save Split</button>
+      </Card>
+    </div>
+  );
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// PROGRESS
+// ═══════════════════════════════════════════════════════════════════════════════
+function ProgressTab({logs,wkLogs,plan,deleteLog,showToast}){
+  const [showEntries,setShowEntries]=useState(false);
+  const [confirmDate,setConfirmDate]=useState(null); // date pending deletion
+  const dates=Object.keys(logs).sort();
+  const recent=dates.slice(-21);
+  function series(field){return recent.map(d=>({label:d.slice(5),v:+(logs[d]?.[field]||0)})).filter(d=>d.v>0);}
+  const sleepSeries=recent.map(d=>{
+    const l=logs[d];if(!l?.sleptAt||!l?.wokeAt)return null;
+    const [sh,sm]=(l.sleptAt||"00:00").split(":").map(Number);
+    const [wh,wm]=(l.wokeAt||"00:00").split(":").map(Number);
+    let diff=(wh*60+wm)-(sh*60+sm);if(diff<0)diff+=1440;
+    return {label:d.slice(5),v:+(diff/60).toFixed(1)};
+  }).filter(Boolean);
+  const exercises={};
+  Object.entries(wkLogs).forEach(([date,sess])=>{
+    (sess.exercises||[]).forEach(ex=>{
+      if(!exercises[ex.name])exercises[ex.name]=[];
+      ex.sets.forEach(s=>exercises[ex.name].push({date,weight:s.weight,reps:s.reps}));
+    });
+  });
+  const wSeries=series("weightLbs");
+  const delta=wSeries.length>=2?+(wSeries[wSeries.length-1].v-wSeries[0].v).toFixed(1):null;
+
+  // Volume per muscle group — map exercises to groups
+  const MUSCLE_MAP={
+    Chest:["Bench Press","Incline Bench","Decline Bench","Cable Fly","Dips","Dumbbell Fly","Push"],
+    Back:["Pull-Up","Lat Pulldown","Barbell Row","Cable Row","Face Pull","Deadlift","Romanian DL"],
+    Shoulders:["OHP","Lat Raise","Front Raise","Arnold Press","Shrugs"],
+    Biceps:["Barbell Curl","Hammer Curl","Incline Curl","Cable Curl"],
+    Triceps:["Skull Crusher","Tricep Pushdown","Overhead Tricep","Dips"],
+    Legs:["Squat","Leg Press","Leg Curl","Leg Extension","Hip Thrust","Calf Raise","Lunges","Romanian DL"],
+    Core:["Plank","Crunch","Cable Crunch","Hanging Leg Raise"],
+  };
+  // Compute sets per group for last 7 days and prior 7 days for comparison
+  const thisWeekDates=getWeekDates(fmtDate(new Date()));
+  const muscleVol={};
+  Object.entries(wkLogs).forEach(([date,sess])=>{
+    const inThisWeek=thisWeekDates.includes(date);
+    (sess.exercises||[]).forEach(ex=>{
+      Object.entries(MUSCLE_MAP).forEach(([group,lifts])=>{
+        if(lifts.some(l=>ex.name.toLowerCase().includes(l.toLowerCase())||l.toLowerCase().includes(ex.name.toLowerCase()))){
+          if(!muscleVol[group]) muscleVol[group]={thisWeek:0,allTime:0};
+          muscleVol[group].allTime+=ex.sets.length;
+          if(inThisWeek) muscleVol[group].thisWeek+=ex.sets.length;
+        }
+      });
+    });
+  });
+
+  return(
+    <div>
+      {delta!==null&&(
+        <Card>
+          <div style={{display:"flex",justifyContent:"space-around",textAlign:"center",flexWrap:"wrap",gap:16}}>
+            {[["Current",`${wSeries[wSeries.length-1].v} lbs`,C.accent],
+              ["Change",`${delta>0?"+":""}${delta} lbs`,delta>0?C.accent:C.red],
+              ["Days Logged",dates.length,C.blue],
+              ["Avg Protein",`${Math.round(series("prot").reduce((s,d)=>s+d.v,0)/(series("prot").length||1))}g`,C.red]].map(([l,v,c])=>(
+              <div key={l}>
+                <div style={{fontFamily:"monospace",fontSize:22,fontWeight:700,color:c}}>{v}</div>
+                <div style={{fontSize:10,color:C.muted,textTransform:"uppercase",letterSpacing:"0.06em",marginTop:2}}>{l}</div>
+              </div>
+            ))}
+          </div>
+        </Card>
+      )}
+      <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(300px,1fr))",gap:14}}>
+        {[["Body Weight",series("weightLbs"),C.accent,"lbs"],
+          ["Calories",series("cal"),C.yellow,"kcal",plan.cal],
+          ["Protein",series("prot"),C.red,"g",plan.prot],
+          ["Water",series("waterOz"),C.blue,"oz"],
+          ["Sleep",sleepSeries,C.purple,"h",8]].map(([label,data,color,unit,goal])=>(
+          <Card key={label}>
+            <SH>{label}</SH>
+            <LineChart data={data} color={color} unit={unit} goal={goal}/>
+          </Card>
+        ))}
+      </div>
+
+      {/* Volume per muscle group */}
+      {Object.keys(muscleVol).length>0&&(
+        <Card>
+          <SH>Volume This Week (sets per muscle group)</SH>
+          <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(200px,1fr))",gap:10}}>
+            {Object.entries(muscleVol).map(([group,v])=>{
+              const pct=Math.min(100,Math.round(v.thisWeek/20*100)); // 20 sets = "full" bar
+              return(
+                <div key={group} style={{background:C.surf,borderRadius:10,padding:"10px 14px"}}>
+                  <div style={{display:"flex",justifyContent:"space-between",marginBottom:5}}>
+                    <span style={{fontSize:12,fontWeight:600}}>{group}</span>
+                    <span style={{fontFamily:"monospace",fontSize:12,color:C.accent}}>{v.thisWeek} sets</span>
+                  </div>
+                  <div style={{background:C.border,borderRadius:3,height:5,overflow:"hidden"}}>
+                    <div style={{width:`${pct}%`,height:"100%",background:
+                      v.thisWeek>=10?C.green:v.thisWeek>=5?C.yellow:C.accent,
+                      borderRadius:3,transition:"width 0.4s"}}/>
+                  </div>
+                  <div style={{fontSize:10,color:C.dim,marginTop:4}}>{v.allTime} sets total logged</div>
+                </div>
+              );
+            })}
+          </div>
+          <div style={{fontSize:10,color:C.dim,marginTop:10,lineHeight:1.5}}>
+            Evidence-based target: 10-20 sets per muscle per week for hypertrophy (Schoenfeld 2017). Green = 10+ sets this week.
+          </div>
+        </Card>
+      )}
+
+      <SH style={{marginTop:8}}>Lifting PRs</SH>
+      <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(280px,1fr))",gap:14,marginBottom:14}}>
+        {Object.keys(exercises).length===0&&<div style={{color:C.dim,fontSize:13,padding:20,gridColumn:"1/-1"}}>No lifts logged yet</div>}
+        {Object.entries(exercises).map(([name,sets])=>{
+          const pr=Math.max(...sets.map(s=>s.weight));
+          const byDate={};
+          sets.sort((a,b)=>a.date.localeCompare(b.date)).forEach(s=>{if(!byDate[s.date])byDate[s.date]=[];byDate[s.date].push(s);});
+          const chartData=Object.entries(byDate).map(([d,ss])=>({label:d.slice(5),v:Math.max(...ss.map(s=>s.weight))}));
+          return(
+            <Card key={name}>
+              <div style={{display:"flex",justifyContent:"space-between",marginBottom:8}}>
+                <span style={{fontSize:14,fontWeight:700}}>{name}</span>
+                <span style={{fontFamily:"monospace",color:C.accent,fontSize:13}}>PR {pr} lbs</span>
+              </div>
+              <LineChart data={chartData} color={C.accent} unit=" lbs" h={50}/>
+            </Card>
+          );
+        })}
+      </div>
+
+      <Card>
+        <SH>Manage Entries</SH>
+        <button onClick={()=>setShowEntries(v=>!v)} style={{...BTN(showEntries),width:"100%",marginBottom:showEntries?12:0}}>
+          {showEntries?"Hide Entries":`Show All Entries (${dates.length})`}
+        </button>
+        {showEntries&&(
+          <div style={{maxHeight:360,overflowY:"auto"}}>
+            {[...dates].reverse().map(d=>{
+              const l=logs[d]||{};
+              return(
+                <div key={d} style={{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"9px 0",borderBottom:`1px solid ${C.border}`}}>
+                  <div>
+                    <div style={{fontSize:13,fontWeight:600}}>{d}</div>
+                    <div style={{fontSize:11,color:C.muted}}>
+                      {l.weightLbs?`${l.weightLbs} lbs  `:""}
+                      {l.cal?`${l.cal} cal  `:""}
+                      {(l.foods||[]).length} food{(l.foods||[]).length!==1?"s":""}
+                    </div>
+                  </div>
+                  {confirmDate===d?(
+                    <div style={{display:"flex",gap:6,alignItems:"center"}}>
+                      <span style={{fontSize:11,color:C.red}}>Sure?</span>
+                      <button
+                        onClick={()=>{ deleteLog(d); setConfirmDate(null); showToast(`${d} deleted`); }}
+                        style={{background:C.red,border:"none",cursor:"pointer",borderRadius:8,
+                          padding:"6px 12px",fontSize:12,fontWeight:700,color:"#fff",fontFamily:"inherit"}}>
+                        Yes
+                      </button>
+                      <button
+                        onClick={()=>setConfirmDate(null)}
+                        style={{background:C.border,border:"none",cursor:"pointer",borderRadius:8,
+                          padding:"6px 12px",fontSize:12,fontWeight:700,color:C.muted,fontFamily:"inherit"}}>
+                        No
+                      </button>
+                    </div>
+                  ):(
+                    <button
+                      onClick={()=>setConfirmDate(d)}
+                      style={{background:"none",border:`1px solid ${C.red}`,cursor:"pointer",borderRadius:8,
+                        padding:"6px 14px",fontSize:12,fontWeight:700,color:C.red,fontFamily:"inherit"}}>
+                      Delete
+                    </button>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+        )}
+      </Card>
+    </div>
+  );
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// SETTINGS
+// ═══════════════════════════════════════════════════════════════════════════════
+function SettingsTab({profile,saveProfile,showToast,plan,recentW}){
+  const [f,setF]=useState(profile);
+  useEffect(()=>setF(profile),[profile]);
+  const set=(k,v)=>setF(p=>({...p,[k]:v}));
+  const opts=RATE_OPTS[f.plan||"bulk"]||RATE_OPTS.bulk;
+  const safeIdx=Math.min(f.rateIdx??1,opts.length-1);
+  const prev=computePlan(f,recentW);
+  const PC=C.plan[f.plan]||C.accent;
+  function handleSave(){saveProfile({...f,rateIdx:safeIdx});showToast("Saved");}
+
+  return(
+    <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(320px,1fr))",gap:14}}>
+      <Card>
+        <SH>Profile</SH>
+        {[["Name","name","text","Elijah"],["Age","age","number","21"],["Height (cm)","heightCm","number","175"],["Weight Goal (lbs)","weightGoal","number","165"]].map(([l,k,t,ph])=>(
+          <div key={k} style={{marginBottom:12}}><Lbl>{l}</Lbl><input type={t} value={f[k]||""} onChange={e=>set(k,e.target.value)} placeholder={ph} style={INP}/></div>
+        ))}
+        <div style={{marginBottom:12}}>
+          <Lbl>Biological Sex</Lbl>
+          <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8}}>
+            {["male","female"].map(s=><button key={s} onClick={()=>set("sex",s)} style={{...BTN(f.sex===s),padding:"10px 0",fontFamily:"inherit"}}>{s.charAt(0).toUpperCase()+s.slice(1)}</button>)}
+          </div>
+        </div>
+        <Lbl>Activity Level</Lbl>
+        <select value={f.activityKey||"moderate"} onChange={e=>set("activityKey",e.target.value)} style={INP}>
+          {Object.entries(ACT).map(([k,v])=><option key={k} value={k}>{v.l}</option>)}
+        </select>
+      </Card>
+
+      <Card>
+        <SH>Goal Plan</SH>
+        <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:8,marginBottom:16}}>
+          {["cut","maintain","bulk"].map(p=>(
+            <button key={p} onClick={()=>{set("plan",p);set("rateIdx",1);}}
+              style={{...BTN(f.plan===p,C.plan[p]),padding:"12px 0",fontSize:12,fontFamily:"inherit"}}>
+              {p==="cut"?"Cut":p==="bulk"?"Bulk":"Maintain"}
+            </button>
+          ))}
+        </div>
+        {opts.length>1&&(
+          <>
+            <Lbl>Rate of Change</Lbl>
+            {opts.map((opt,i)=>(
+              <div key={i} onClick={()=>set("rateIdx",i)}
+                style={{display:"flex",alignItems:"center",gap:12,padding:"11px 14px",marginBottom:8,borderRadius:10,
+                  background:safeIdx===i?`${PC}18`:C.surf,border:`1px solid ${safeIdx===i?PC:C.border}`,cursor:"pointer"}}>
+                <div style={{width:16,height:16,borderRadius:"50%",border:`2px solid ${safeIdx===i?PC:C.dim}`,display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}>
+                  {safeIdx===i&&<div style={{width:8,height:8,borderRadius:"50%",background:PC}}/>}
+                </div>
+                <div>
+                  <div style={{fontSize:13,fontWeight:600}}>{opt.l}</div>
+                  <div style={{fontSize:11,color:C.muted}}>{opt.tag}</div>
+                </div>
+              </div>
+            ))}
+          </>
+        )}
+      </Card>
+
+      <Card>
+        <SH>Auto-Calculated Targets</SH>
+        {[
+          ["BMR",        prev.bmr,  "kcal", C.muted],
+          ["TDEE",       prev.tdee, "kcal", C.muted],
+          ["Goal Cal",   prev.cal,  "kcal", C.accent],
+          ["Protein",    prev.prot, "g",    C.red],
+          ["Carbs",      prev.carb, "g",    C.yellow],
+          ["Fat",        prev.fat,  "g",    C.green],
+        ].map(([l,v,u,col])=>(
+          <div key={l} style={{display:"flex",justifyContent:"space-between",marginBottom:10,paddingBottom:10,borderBottom:`1px solid ${C.border}`}}>
+            <span style={{fontSize:13,color:C.muted}}>{l}</span>
+            <span style={{fontFamily:"monospace",fontSize:16,fontWeight:700,color:col}}>{v} <span style={{fontSize:11,color:C.dim}}>{u}</span></span>
+          </div>
+        ))}
+        <div style={{fontSize:11,color:C.dim,lineHeight:1.7,padding:"10px 12px",background:C.surf,borderRadius:8}}>
+          <strong style={{color:C.muted}}>Formulas used:</strong><br/>
+          BMR: Mifflin-St Jeor<br/>
+          Protein: {f.plan==="cut"?"1.0 g/lb (2.2 g/kg) — higher on cut to preserve muscle":"0.82 g/lb (1.8 g/kg) — ISSN/ACSM sweet spot"}<br/>
+          Fat: &ge;0.35 g/lb or &ge;20% of calories (whichever is higher)<br/>
+          Carbs: remaining calories after protein + fat<br/>
+          Calories: TDEE {prev.delta>0?`+${prev.delta}`:prev.delta} kcal ({(RATE_OPTS[f.plan||"bulk"]||RATE_OPTS.bulk)[safeIdx]?.tag})
+        </div>
+      </Card>
+
+      <button onClick={handleSave} style={{...BTN(true),gridColumn:"1/-1",padding:15,fontSize:15,fontFamily:"inherit"}}>Save Profile</button>
+    </div>
+  );
+}
+
+
+/* ── MOBILE BOTTOM NAV ───────────────────────────────────────────── */
+const C_NAV={accent:"#c8774a",dim:"#3a3228"};
+const MNAV=[
+  {id:"Dashboard",ic:"⬡"},
+  {id:"Nutrition",ic:"◈"},
+  {id:"Training", ic:"◉"},
+  {id:"Progress", ic:"◎"},
+  {id:"Settings", ic:"◌"},
+];
+
+function MobileNav() {
+  const [active,setActive]=useState("Dashboard");
+  useEffect(()=>{
+    const id=setInterval(()=>{
+      const t=window._jdbTab||"Dashboard";
+      if(t!==active) setActive(t);
+    },80);
+    return ()=>clearInterval(id);
+  },[active]);
+  return (
+    <nav className="jdb-bottom-nav">
+      {MNAV.map(({id,ic})=>(
+        <button key={id}
+          onClick={()=>{ window._jdbSetTab&&window._jdbSetTab(id); setActive(id); window._jdbTab=id; }}
+          style={{background:"none",border:"none",cursor:"pointer",display:"flex",flexDirection:"column",
+            alignItems:"center",gap:3,padding:"2px 8px",
+            color:active===id?C_NAV.accent:C_NAV.dim,fontFamily:"system-ui",transition:"color 0.15s"}}>
+          <span style={{fontSize:19}}>{ic}</span>
+          <span style={{fontSize:9,fontWeight:700,letterSpacing:"0.06em"}}>{id.toUpperCase()}</span>
+        </button>
+      ))}
+    </nav>
+  );
+}
+
+// Expose setTab to mobile nav
+const _OrigApp = App;
+function AppWithMobileNav() {
+  const [tab,setTabOuter]=useState("Dashboard");
+  useEffect(()=>{ window._jdbSetTab=setTabOuter; },[]);
+  // We can't intercept App's internal state directly, so we use the global
+  return (
+    <>
+      <App/>
+      <MobileNav/>
+    </>
+  );
+}
+
+ReactDOM.createRoot(document.getElementById("root")).render(<AppWithMobileNav/>);
+</script>
+</body>
+</html>
